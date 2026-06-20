@@ -1,0 +1,40 @@
+name: Générer l'application Windows (.EXE)
+
+# Le script se déclenche à chaque fois que vous modifiez le code ou manuellement
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  creation-exe:
+    runs-on: windows-latest
+
+    steps:
+    # 1. Copier les fichiers de votre GitHub sur le serveur virtuel
+    - name: Récupérer le code source
+      uses: actions/checkout@v4
+
+    # 2. Installer Python sur le serveur virtuel
+    - name: Installer Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # 3. Installer les modules nécessaires pour votre application
+    - name: Installer les outils (ReportLab et PyInstaller)
+      run: |
+        python -m pip install --upgrade pip
+        pip install reportlab pyinstaller
+
+    # 4. Transformer le fichier main.py en un fichier main.exe autonome
+    - name: Compiler en fichier .exe
+      run: |
+        pyinstaller --onefile --windowed main.py
+
+    # 5. Mettre à disposition le fichier .exe pour le téléchargement
+    - name: Rendre le fichier disponible au téléchargement
+      uses: actions/upload-artifact@v4
+      with:
+        name: Application-PPE-Vault
+        path: dist/main.exe
