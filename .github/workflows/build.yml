@@ -1,40 +1,35 @@
-name: Générer l'application Windows (.EXE)
+name: Génération Binaire ISOFU (Windows)
 
-# Le script se déclenche à chaque fois que vous modifiez le code ou manuellement
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  creation-exe:
+  compilation-matrice:
     runs-on: windows-latest
 
     steps:
-    # 1. Copier les fichiers de votre GitHub sur le serveur virtuel
-    - name: Récupérer le code source
+    - name: Extraction du code source
       uses: actions/checkout@v4
 
-    # 2. Installer Python sur le serveur virtuel
-    - name: Installer Python
+    - name: Injection de l'environnement Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    # 3. Installer les modules nécessaires pour votre application
-    - name: Installer les outils (ReportLab et PyInstaller)
+    - name: Installation des dépendances (PDF & Forge)
       run: |
         python -m pip install --upgrade pip
         pip install reportlab pyinstaller
 
-    # 4. Transformer le fichier main.py en un fichier main.exe autonome
-    - name: Compiler en fichier .exe
+    - name: Compilation de l'exécutable monolithique
+      # L'argument --name forge l'identité du binaire final, écrasant le générique 'main'
       run: |
-        pyinstaller --onefile --windowed main.py
+        pyinstaller --onefile --windowed --name "EPI_MANAGER_ISOFU" main.py
 
-    # 5. Mettre à disposition le fichier .exe pour le téléchargement
-    - name: Rendre le fichier disponible au téléchargement
+    - name: Exfiltration de l'artefact
       uses: actions/upload-artifact@v4
       with:
-        name: Application-PPE-Vault
-        path: dist/main.exe
+        name: EPI_MANAGER_ISOFU_Windows
+        path: dist/EPI_MANAGER_ISOFU.exe
