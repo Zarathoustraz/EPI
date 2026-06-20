@@ -1,0 +1,123 @@
+=============================================================================
+             EPI MANAGER (v3.0)  ·  MANUEL & GUIDE TECHNIQUE
+             Système d'Endiguement de l'Entropie Matérielle
+             Conçu pour ISOFU  ·  Architecte : Roger Fernando
+=============================================================================
+
+§1  AXIOMATIQUE GÉNÉRALE & TOPOLOGIE DU SYSTÈME
+-----------------------------------------------------------------------------
+EPI MANAGER n'est pas un simple registre de magasinage ; c'est un dispositif
+déductif strict conçu pour imposer l'ordre de la Loi 65-99 et de l'ISO 9001 au 
+chaos intrinsèque des chantiers de revêtement industriel d'ISOFU. Le logiciel 
+traite chaque équipement de protection comme un vecteur à durée de vie finie, 
+soumis à une dégradation temporelle et mécanique mesurable. 
+
+Le système repose sur une triade de structures immuables :
+  1. Morphometrics : Cartographie de l'empreinte physique des agents (taille, 
+     pointure) associés à un statut discriminant (Active, Suspended, Terminated).
+  2. Arsenal : Le catalogue des types d'EPI, définissant l'algèbre de leur usure 
+     (lifespan_days) et leur valeur financière objective.
+  3. Vault : L'état des stocks réels distribués par numéros de lots, soumis à 
+     un seuil d'alerte critique infalsifiable.
+
+Toute interaction opérationnelle est consignée de manière irréversible dans le 
+registre Entropy_Log sous forme de transactions signées cryptographiquement.
+
+
+§2  L'ARCHITECTURE DES DONNÉES : RIGOUREUSEMENT FLOATING-FREE
+-----------------------------------------------------------------------------
+Le système applique un principe d'exactitude arithmétique absolue :
+  · ZÉRO FLOAT : L'imprécision inhérente aux nombres à virgule flottante est un
+    facteur d'entropie inacceptable. Tous les montants financiers (coûts 
+    unitaires, valeurs globales) sont stockés sous forme d'ENTIERS représentant 
+    la valeur en centimes de Dirhams (MAD).
+  · Le formatage textuel commercial (ex: 85.50 MAD) est strictement isolé au 
+    niveau de la couche graphique (GUI) et du rendu PDF via la fonction interne 
+    _fmt_mad().
+  · La base de données exploite le mode WAL (Write-Ahead Logging) pour garantir 
+    l'atomicité et la résistance aux coupures de courant brutales.
+
+
+§3  PROTOCOLE D'ALLOCATION (TERMINAL ATOMIQUE)
+-----------------------------------------------------------------------------
+Pour distribuer un EPI à un opérateur sur le terrain, l'interface impose un 
+mécanisme de validation en cascade :
+  1. Sélection de l'Agent : Le système filtre et n'affiche que les agents dont 
+     le statut est 'Active'. Si un opérateur est 'Suspended' (ex: manquement à 
+     la sécurité), le moteur bloque l'allocation par injection d'un invariant 
+     logique négatif.
+  2. Sélection du Lot (Vault) : Le terminal affiche uniquement les lots dont la 
+     quantité est strictement supérieure à zéro (qty > 0).
+  3. Spécification du Chantier : L'utilisateur doit saisir le site d'affectation
+     (minimum 3 caractères de densité informative).
+
+Dès l'impulsion du bouton "ÉMETTRE L'ÉQUIPEMENT", la transaction s'exécute sous 
+verrou SQL :
+  · Décrémentation instantanée de la quantité du lot (qty = qty - 1).
+  · Calcul de la "date de mort attendue" (expected_death_timestamp) par la 
+    formule élémentaire : T_maintenant + (lifespan_days * 86400).
+  · Insertion d'une ligne d'état initialisé à 'Compliant'.
+  · Génération d'une signature cryptographique HMAC-SHA256 (voir §5).
+
+
+§4  TRAÇABILITÉ DE L'USURE & GUILLOTINE ISO 9001 (NON-CONFORMITÉS)
+-----------------------------------------------------------------------------
+L'usure d'un équipement n'est pas une simple approximation visuelle, c'est une 
+non-conformité documentaire au sens de la clause 10.2 de l'ISO 9001:2015. 
+L'onglet "NON-CONFORMITÉS ISO 9001" agit comme une guillotine opérationnelle.
+
+Lorsqu'un EPI subit une avarie avant son terme naturel ou atteint sa limite, 
+l'administrateur doit :
+  1. Sélectionner la transaction active dans la liste.
+  2. Assigner un motif explicite parmi la nomenclature PDCA (Déchirure Mécanique,
+     Saturation Solvant, Perte/Vol, Défaut Fabricant, Rupture Structure, etc.).
+  3. Valider la clôture. Le statut de la transaction bascule irréversiblement 
+     vers 'Scrapped', figeant la ligne log et libérant l'opérateur pour une 
+     future allocation.
+
+
+§5  MOTEUR CRYPTOGRAPHIQUE & SCANNERS D'INTÉGRITÉ
+-----------------------------------------------------------------------------
+Afin d'empêcher toute falsification malveillante de l'historique par modification
+directe du fichier SQLite, l'architecte Roger Fernando a intégré un protocole 
+de hachage à clé secrète (HMAC-SHA256).
+
+Chaque transaction valide génère une empreinte numérique unique basée sur la 
+concaténation canonique délimitée par des caractères nuls (\x00) des champs 
+suivants :
+  [tx_id] + [agent_id] + [stock_id] + [timestamp_issued] + [chantier] + [expected_death_timestamp]
+
+Le bouton "SCAN INTÉGRITÉ DB" exécute une vérification en temps constant. Le 
+scanner recalcule le HMAC de chaque enregistrement et le confronte à la signature 
+stockée :
+  · Si les empreintes divergent : Le système lève immédiatement une alerte 
+    majeure ("SIGNATURE HMAC INVALIDE — FALSIFICATION DÉTECTÉE").
+  · Le scanner applique également une expiration automatique : si l'heure 
+    système dépasse le timestamp théorique de fin de vie, l'état bascule de 
+    'Compliant' à 'Expired' sans altérer la signature d'origine.
+
+
+§6  MOTEUR DE RENDU PDF : LE REGISTRE DES PREUVES D'ISOFU
+-----------------------------------------------------------------------------
+Les rapports générés par EPI MANAGER servent de preuves documentaires auditables 
+pendant une durée réglementaire de 5 ans. Quatre modules d'extraction sont 
+disponibles via le moteur ReportLab :
+
+  1. Bon d'Attribution (PDF Individuel) : Généré immédiatement après une 
+     allocation réussie. Il contient l'identité complète de l'agent, le code 
+     et le lot de l'EPI, les dates d'émission et de fin théorique, la 
+     localisation du chantier, le HMAC infalsifiable, ainsi que les espaces 
+     physiques réservés à la signature de l'agent et au visa du Responsable HSE.
+  2. État des Allocations : Restitution dynamique des indicateurs clés (KPI) et 
+     de la liste des équipements actuellement en service, triés par urgence 
+     d'expiration.
+  3. Journal des Non-Conformités : Registre des actions correctives prises face 
+     aux ruptures ou dégradations matérielles, indispensable pour clore les 
+     audits ISO.
+  4. Inventaire du Vault : Bilan comptable exact du stock résiduel, mettant en 
+     évidence les lots sous le seuil critique (Alerte / Rupture) avec calcul 
+     de la valeur globale immobilisée en centimes.
+
+Tous les rapports générés sont centralisés automatiquement dans le sous-dossier 
+'rapports_ppe' colocalisé avec l'exécutable du programme.
+=============================================================================

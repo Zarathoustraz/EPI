@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  PPE VAULT  ·  Loi 65-99 / ISO 9001  ·  Maroc Industriel
+#  EPI MANAGER  ·  ISOFU  ·  Architecte : Roger Fernando
 #  Gestion EPI — Sites de Revêtement Industriel
 #  main.py — Fichier monolithique · v3.0
 #
@@ -851,10 +851,10 @@ def _common_header_footer(canvas_obj, doc) -> None:
     canvas_obj.rect(0, H - 28*mm, W, 28*mm, fill=1, stroke=0)
     canvas_obj.setFillColor(colors.white)
     canvas_obj.setFont("Helvetica-Bold", 11)
-    canvas_obj.drawString(15*mm, H - 13*mm, "PPE VAULT")
+    canvas_obj.drawString(15*mm, H - 13*mm, "EPI MANAGER — ISOFU")
     canvas_obj.setFont("Helvetica", 8)
     canvas_obj.drawString(15*mm, H - 21*mm,
-        "Loi 65-99 / ISO 9001  \xb7  Sites Revetement Industriel  \xb7  Maroc")
+        "Architecture : Roger Fernando  \xb7  Loi 65-99 / ISO 9001  \xb7  Maroc")
     ts = time.strftime("Genere le : %d/%m/%Y  %H:%M:%S")
     canvas_obj.drawRightString(W - 15*mm, H - 13*mm, ts)
     canvas_obj.drawRightString(W - 15*mm, H - 21*mm, f"Page {doc.page}")
@@ -1233,7 +1233,7 @@ class PPEVaultApp(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("PPE VAULT  \u00b7  Loi 65-99 / ISO 9001  \u00b7  Maroc")
+        self.title("EPI MANAGER  ·  ISOFU  ·  Architecte : Roger Fernando")
         self.geometry("1300x820")
         self.minsize(1080, 700)
         self.configure(bg=C["bg0"])
@@ -1334,12 +1334,12 @@ class PPEVaultApp(tk.Tk):
         left = tk.Frame(hdr, bg=C["bg1"])
         left.pack(side="left", padx=20)
         tk.Label(
-            left, text="\U0001f6e1  PPE VAULT",
+            left, text="\U0001f6e1  EPI MANAGER",
             bg=C["bg1"], fg=C["blue"],
             font=("Segoe UI", 15, "bold"),
         ).pack(side="left")
         tk.Label(
-            left, text="   Loi 65-99 \u00b7 ISO 9001 \u00b7 Sites Revetement Industriel",
+            left, text="   ISOFU \u00b7 Loi 65-99 \u00b7 Architecte : Roger Fernando",
             bg=C["bg1"], fg=C["t1"], font=("Segoe UI", 9),
         ).pack(side="left")
 
