@@ -38,6 +38,7 @@ import time
 import traceback
 import tkinter as tk
 from tkinter import messagebox, ttk
+import tkinter.simpledialog as sd
 
 
 def _resolve_db_path() -> str:
@@ -1561,7 +1562,7 @@ class PPEVaultApp(tk.Tk):
         bar.pack(fill="x", side="bottom")
         bar.pack_propagate(False)
         self._status_var = tk.StringVar(value="Systeme pret.")
-        self._backup_var = tk.StringVar(value="Backup : —")
+        self._backup_var = tk.StringVar(value="Backup : \u2014")
         tk.Label(
             bar, textvariable=self._status_var,
             bg=C["bg3"], fg=C["t1"],
@@ -1904,8 +1905,32 @@ class PPEVaultApp(tk.Tk):
                 )
                 return
 
+            # --- DÉBUT : LA FRICTION COGNITIVE (CHECKSUM DE SÉCURITÉ) ---
+            agent_raw = self._agent_map[agent_lbl]
+            stock_raw = self._stock_map[stock_lbl]["lot_number"]
+
+            # Croisement des entropies : 3 derniers chars de l'Agent + 3 derniers du Lot
+            checksum = f"{agent_raw[-3:]}-{stock_raw[-3:]}".upper()
+
+            user_input = sd.askstring(
+                "VERROUILLAGE ACTIF",
+                f"Validation d'attention requise.\n\n"
+                f"Agent : {agent_lbl.split()[0]}\n"
+                f"Lot   : {stock_raw}\n\n"
+                f"Veuillez inscrire le code de securite suivant sur l'EPI ou la fiche,\n"
+                f"puis recopiez-le ici pour debloquer l'emission :\n\n{checksum}",
+                parent=self
+            )
+
+            # Guillotine : Si l'opérateur annule ou se trompe, la transaction meurt.
+            if user_input is None or user_input.strip().upper() != checksum:
+                self._alloc_err_var.set("\u274c Allocation annulee : Code de securite invalide.")
+                self._alloc_btn.config(state="normal", text="\u2705  EMETTRE L'EQUIPEMENT")
+                return
+            # --- FIN : FRICTION COGNITIVE ---
+
             ok, msg = allocate_ppe(
-                self._agent_map[agent_lbl],
+                agent_raw,
                 self._stock_map[stock_lbl]["stock_id"],
                 chantier,
             )
