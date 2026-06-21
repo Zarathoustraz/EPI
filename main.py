@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  EPI MANAGER  ·  Loi 65-99 / ISO 9001  ·  ISOFU
+#  PPE VAULT  ·  Loi 65-99 / ISO 9001  ·  Maroc Industriel
 #  Gestion EPI — Sites de Revêtement Industriel
 #  main.py — Fichier monolithique · v3.0
 #
@@ -11,7 +11,7 @@
 #    §4  Moteur cryptographique (HMAC-SHA256)
 #    §5  Logique métier
 #    §6  Requêtes & helpers GUI
-#    §7  Interface graphique (EPIManagerApp)
+#    §7  Interface graphique (PPEVaultApp)
 #    §8  Point d'entrée
 #
 #  INVARIANTS:
@@ -19,8 +19,6 @@
 #    · _fmt_mad() appelé UNIQUEMENT dans la couche GUI
 #    · Signatures HMAC couvrent tx_id + agent_id + stock_id + ts + chantier + ts_death
 #    · Insert deux temps : PENDING → signature réelle (atomique WAL)
-#
-#  Architecte : Roger Fernando  |  Société : ISOFU
 # =============================================================================
 
 # =============================================================================
@@ -29,14 +27,17 @@
 
 import hashlib
 import hmac
+import logging
+import logging.handlers
 import os
-import re
+import shutil
 import sqlite3
 import sys
+import threading
 import time
+import traceback
 import tkinter as tk
 from tkinter import messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
 
 
 def _resolve_db_path() -> str:
@@ -54,13 +55,118 @@ def _resolve_db_path() -> str:
         base = os.path.dirname(sys.executable)
     else:
         base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "epi_manager.db")
+    return os.path.join(base, "ppe_vault.db")
 
 
 DB_PATH: str = _resolve_db_path()
 
+# =============================================================================
+#  §2.5 — LOGGING PRODUCTION (rotating file, 5 Mo × 3)
+# =============================================================================
+
+def _resolve_log_path() -> str:
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, "logs")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "epi_manager.log")
+
+
+def _setup_logger() -> logging.Logger:
+    logger = logging.getLogger("epi_manager")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.DEBUG)
+    fmt = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(funcName)-28s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Fichier rotatif — 5 Mo × 3 = 15 Mo max
+    fh = logging.handlers.RotatingFileHandler(
+        _resolve_log_path(), maxBytes=5 * 1024 * 1024,
+        backupCount=3, encoding="utf-8",
+    )
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    # Console uniquement en mode dev
+    if not getattr(sys, "frozen", False):
+        ch = logging.StreamHandler()
+        ch.setFormatter(fmt)
+        logger.addHandler(ch)
+    return logger
+
+
+_LOG: logging.Logger = _setup_logger()
+
+# =============================================================================
+#  §2.6 — MOTEUR DE BACKUP AUTOMATIQUE
+# =============================================================================
+
+BACKUP_KEEP_N: int = 10          # conserver les N dernières sauvegardes
+_backup_lock  = threading.Lock() # un seul backup simultané
+
+
+def _resolve_backup_dir() -> str:
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, "backups")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def backup_db(reason: str = "scheduled") -> tuple[bool, str]:
+    """
+    Backup online via sqlite3.Connection.backup() — safe pendant les lectures.
+    WAL checkpoint forcé avant copie.
+    Retourne (ok, chemin_ou_erreur).
+    """
+    if not _backup_lock.acquire(blocking=False):
+        return False, "Backup déjà en cours."
+    try:
+        ts    = time.strftime("%Y%m%d_%H%M%S")
+        fname = f"epi_manager_{ts}_{reason[:16].replace(' ', '_')}.db"
+        path  = os.path.join(_resolve_backup_dir(), fname)
+
+        src_conn = sqlite3.connect(DB_PATH)
+        # Checkpoint WAL avant backup — vide le journal dans la DB principale
+        src_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        dst_conn = sqlite3.connect(path)
+        src_conn.backup(dst_conn, pages=256)   # 256 pages (~1 Mo) par itération
+        dst_conn.close()
+        src_conn.close()
+
+        _purge_old_backups()
+        sz = os.path.getsize(path)
+        _LOG.info("Backup OK — %s  (%s  %d octets)", reason, fname, sz)
+        return True, path
+    except Exception as exc:
+        _LOG.error("Backup ECHOUE — %s : %s", reason, exc)
+        return False, str(exc)
+    finally:
+        _backup_lock.release()
+
+
+def _purge_old_backups() -> None:
+    """Conserve les BACKUP_KEEP_N sauvegardes les plus récentes."""
+    try:
+        bdir  = _resolve_backup_dir()
+        files = sorted(
+            [f for f in os.listdir(bdir) if f.endswith(".db")],
+            reverse=True,
+        )
+        for old in files[BACKUP_KEEP_N:]:
+            os.unlink(os.path.join(bdir, old))
+            _LOG.info("Backup ancien supprimé : %s", old)
+    except Exception as exc:
+        _LOG.warning("Purge backups échouée : %s", exc)
+
+
 # Sel cryptographique — NE PAS MODIFIER APRÈS PREMIER DÉPLOIEMENT
-SECRET_SALT: bytes = b"LOI6599_ISO9001_EPI_ISOFU_v3_INVIOLABLE_ROGER_FERNANDO"
+SECRET_SALT: bytes = b"LOI6599_ISO9001_PPE_MAROC_v3_INVIOLABLE_BOUSKOURA"
 
 # Palette couleurs GitHub Dark
 C: dict[str, str] = {
@@ -173,36 +279,81 @@ _SEED_VAULT: list[tuple] = [
 #  §3 — COUCHE BASE DE DONNÉES
 # =============================================================================
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+def _get_conn(retries: int = 5, delay: float = 0.3) -> sqlite3.Connection:
+    """
+    Connexion robuste — busy_timeout + retry exponentiel.
+    Résiste aux accès concurrents (backup, audit en arrière-plan).
+    """
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")   # 5 s attente si verrou
+            conn.execute("PRAGMA synchronous=NORMAL")  # WAL+NORMAL = équilibre perf/sécurité
+            conn.execute("PRAGMA cache_size=-8192")    # 8 Mo cache page
+            return conn
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            _LOG.warning("_get_conn tentative %d/%d : %s", attempt + 1, retries, exc)
+            if attempt < retries - 1:
+                time.sleep(delay * (2 ** attempt))    # backoff exponentiel
+    _LOG.critical("_get_conn échoué après %d tentatives : %s", retries, last_exc)
+    raise sqlite3.OperationalError(
+        f"Impossible d'ouvrir la base après {retries} tentatives : {last_exc}"
+    )
 
 
 def initialize_database() -> None:
-    """Idempotent — crée les tables et insère les données de référence si vides."""
+    """
+    Idempotent — DDL + seed + integrity check au démarrage.
+    Lève RuntimeError si la base est corrompue.
+    """
+    _LOG.info("Initialisation base de données : %s", DB_PATH)
     conn = _get_conn()
-    with conn:
-        for stmt in _DDL:
-            conn.execute(stmt)
-        if conn.execute("SELECT COUNT(*) FROM Morphometrics").fetchone()[0] == 0:
-            conn.executemany(
-                "INSERT INTO Morphometrics VALUES (?,?,?,?,?,?,?)",
-                _SEED_AGENTS,
+    try:
+        with conn:
+            for stmt in _DDL:
+                conn.execute(stmt)
+            if conn.execute("SELECT COUNT(*) FROM Morphometrics").fetchone()[0] == 0:
+                conn.executemany(
+                    "INSERT INTO Morphometrics VALUES (?,?,?,?,?,?,?)",
+                    _SEED_AGENTS,
+                )
+                _LOG.info("Seed agents inséré (%d lignes)", len(_SEED_AGENTS))
+            if conn.execute("SELECT COUNT(*) FROM Arsenal").fetchone()[0] == 0:
+                conn.executemany(
+                    "INSERT INTO Arsenal VALUES (?,?,?,?,?)",
+                    _SEED_ARSENAL,
+                )
+                _LOG.info("Seed arsenal inséré (%d lignes)", len(_SEED_ARSENAL))
+            if conn.execute("SELECT COUNT(*) FROM Vault").fetchone()[0] == 0:
+                conn.executemany(
+                    "INSERT INTO Vault (ppe_code, lot_number, qty, min_threshold) VALUES (?,?,?,?)",
+                    _SEED_VAULT,
+                )
+                _LOG.info("Seed vault inséré (%d lignes)", len(_SEED_VAULT))
+
+        # Vérification intégrité SQLite
+        result = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if result != "ok":
+            _LOG.critical("INTEGRITY CHECK ÉCHOUÉ : %s", result)
+            raise RuntimeError(
+                f"Base de donnees corrompue (integrity_check = {result}). "
+                "Restaurer depuis le dossier backups/ avant de continuer."
             )
-        if conn.execute("SELECT COUNT(*) FROM Arsenal").fetchone()[0] == 0:
-            conn.executemany(
-                "INSERT INTO Arsenal VALUES (?,?,?,?,?)",
-                _SEED_ARSENAL,
-            )
-        if conn.execute("SELECT COUNT(*) FROM Vault").fetchone()[0] == 0:
-            conn.executemany(
-                "INSERT INTO Vault (ppe_code, lot_number, qty, min_threshold) VALUES (?,?,?,?)",
-                _SEED_VAULT,
-            )
-    conn.close()
+        _LOG.info("Integrity check OK — base saine")
+
+        # Stats
+        counts = {
+            t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in ("Morphometrics", "Arsenal", "Vault", "Entropy_Log")
+        }
+        _LOG.info("Counts : %s", counts)
+    finally:
+        conn.close()
 
 # =============================================================================
 #  §4 — MOTEUR CRYPTOGRAPHIQUE (HMAC-SHA256)
@@ -305,6 +456,11 @@ def allocate_ppe(agent_id: str, stock_id: int, chantier: str) -> tuple[bool, str
             )
 
             expiry = time.strftime("%d/%m/%Y", time.localtime(ts_death))
+            _LOG.info(
+                "ALLOCATION TX-%06d : agent=%s ppe=%s lot=%s chantier=%s expire=%s",
+                tx_id, agent_id, stock["description"][:30],
+                stock["lot_number"], chantier, expiry,
+            )
             return True, (
                 f"TX-{tx_id:06d} EMIS\n\n"
                 f"Agent  : {agent['full_name']}\n"
@@ -347,6 +503,7 @@ def scrap_allocation(tx_id: int, reason: str) -> tuple[bool, str]:
                    WHERE tx_id=?""",
                 (reason, tx_id),
             )
+            _LOG.info("SCRAP TX-%06d : motif=%s", tx_id, reason)
             return True, (
                 f"TX-{tx_id:06d} — Non-conformite enregistree.\n"
                 f"Motif : {reason}"
@@ -1237,10 +1394,15 @@ class PPEVaultApp(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("PPE VAULT  \u00b7  Loi 65-99 / ISO 9001  \u00b7  Maroc")
+        self.title("EPI Manager  \u00b7  ISOFU  \u00b7  Loi 65-99 / ISO 9001")
         self.geometry("1300x820")
         self.minsize(1080, 700)
         self.configure(bg=C["bg0"])
+
+        # ── Gestionnaires d'exceptions — anti-crash production ────────────────
+        self.report_callback_exception = self._handle_tk_exception
+        sys.excepthook = self._handle_sys_exception
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Dark combobox dropdown (widget-level override, must precede style)
         self.option_add("*TCombobox*Listbox.background",       C["bg2"])
@@ -1255,12 +1417,15 @@ class PPEVaultApp(tk.Tk):
         self._build_statusbar()
 
         # Runtime state
-        self._agent_map: dict[str, str]  = {}   # dropdown_label → agent_id
-        self._stock_map: dict[str, dict] = {}   # dropdown_label → stock dict
+        self._agent_map: dict[str, str]  = {}
+        self._stock_map: dict[str, dict] = {}
         self._nc_tx_id:  int | None      = None
+        self._last_backup_ts: int        = 0
 
-        self.after(400, self._refresh_all)
-        self.after(60_000, self._sched_refresh)
+        self.after(400,        self._refresh_all)
+        self.after(60_000,     self._sched_refresh)
+        self.after(3_600_000,  self._sched_backup)
+        self.after(2_000,      lambda: self._do_backup("startup"))
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STYLE
@@ -1338,7 +1503,7 @@ class PPEVaultApp(tk.Tk):
         left = tk.Frame(hdr, bg=C["bg1"])
         left.pack(side="left", padx=20)
         tk.Label(
-            left, text="\U0001f6e1  PPE VAULT",
+            left, text="\U0001f6e1  EPI Manager  \u00b7  ISOFU",
             bg=C["bg1"], fg=C["blue"],
             font=("Segoe UI", 15, "bold"),
         ).pack(side="left")
@@ -1349,6 +1514,14 @@ class PPEVaultApp(tk.Tk):
 
         right = tk.Frame(hdr, bg=C["bg1"])
         right.pack(side="right", padx=20)
+
+        tk.Button(
+            right, text="\U0001f4be BACKUP",
+            bg=C["green"], fg=C["bg0"],
+            font=("Segoe UI", 9, "bold"),
+            relief="flat", cursor="hand2", padx=12, pady=6,
+            command=lambda: self._do_backup("manuel"),
+        ).pack(side="right", padx=(6, 0))
 
         tk.Button(
             right, text="\U0001f50d SCAN INTEGRITE DB",
@@ -1388,11 +1561,17 @@ class PPEVaultApp(tk.Tk):
         bar.pack(fill="x", side="bottom")
         bar.pack_propagate(False)
         self._status_var = tk.StringVar(value="Systeme pret.")
+        self._backup_var = tk.StringVar(value="Backup : —")
         tk.Label(
             bar, textvariable=self._status_var,
             bg=C["bg3"], fg=C["t1"],
             font=("Consolas", 8), anchor="w", padx=12,
-        ).pack(fill="x", expand=True)
+        ).pack(side="left", fill="x", expand=True)
+        tk.Label(
+            bar, textvariable=self._backup_var,
+            bg=C["bg3"], fg=C["green"],
+            font=("Consolas", 8), anchor="e", padx=12,
+        ).pack(side="right")
 
     def _set_status(self, msg: str) -> None:
         self._status_var.set(f"[{time.strftime('%H:%M:%S')}]  {msg}")
@@ -2061,6 +2240,107 @@ class PPEVaultApp(tk.Tk):
             messagebox.showwarning("PDF", res, parent=self)
             self._set_status(f"PDF annule : {res}")
 
+    # =========================================================================
+    #  PRODUCTION — Anti-crash, backup, fermeture propre
+    # =========================================================================
+
+    def _handle_tk_exception(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Override de report_callback_exception de Tkinter.
+        Intercepte toutes les exceptions dans les callbacks GUI.
+        Loggue, affiche un dialog non-bloquant, et CONTINUE.
+        L'application ne plante jamais silencieusement.
+        """
+        tb_str = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
+        _LOG.error("EXCEPTION GUI non geree :\n%s", tb_str)
+        self._set_status(f"ERREUR INTERNE — voir logs/epi_manager.log")
+        try:
+            messagebox.showerror(
+                "Erreur Interne EPI Manager",
+                f"{exc_type.__name__}: {exc_val}\n\n"
+                f"L'application continue de fonctionner.\n"
+                f"Consultez logs/epi_manager.log pour le detail complet.",
+                parent=self,
+            )
+        except Exception:
+            pass   # si le dialog lui-meme plante, on abandonne silencieusement
+
+    def _handle_sys_exception(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        sys.excepthook — capture les exceptions hors thread Tkinter.
+        """
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_val, exc_tb)
+            return
+        tb_str = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
+        _LOG.critical("EXCEPTION SYSTEME non geree :\n%s", tb_str)
+
+    def _do_backup(self, reason: str = "manuel") -> None:
+        """Backup non-bloquant — thread dédié pour ne pas figer la GUI."""
+        def _run():
+            ok, res = backup_db(reason)
+            self.after(0, lambda: self._after_backup(ok, res, reason))
+        threading.Thread(target=_run, daemon=True, name="backup_thread").start()
+
+    def _after_backup(self, ok: bool, res: str, reason: str) -> None:
+        """Appelé dans le thread GUI après le backup (via after(0))."""
+        if ok:
+            self._last_backup_ts = int(time.time())
+            ts_s = time.strftime("%H:%M:%S")
+            fname = os.path.basename(res)
+            self._backup_var.set(f"\U0001f4be {ts_s}  {fname}")
+            _LOG.info("Backup %s confirme : %s", reason, res)
+            if reason == "manuel":
+                self._set_status(f"Backup manuel OK \u2014 {fname}")
+                messagebox.showinfo(
+                    "\U0001f4be Backup OK",
+                    f"Sauvegarde reussie.\n\n{res}",
+                    parent=self,
+                )
+        else:
+            self._backup_var.set("\u26a0 Backup ECHOUE")
+            _LOG.error("Backup %s ECHOUE : %s", reason, res)
+            if reason == "manuel":
+                messagebox.showerror(
+                    "Backup Echoue",
+                    f"La sauvegarde a echoue :\n{res}",
+                    parent=self,
+                )
+
+    def _sched_backup(self) -> None:
+        """Backup horaire automatique — planifie le prochain."""
+        self._do_backup("horaire")
+        self.after(3_600_000, self._sched_backup)
+
+    def _on_close(self) -> None:
+        """
+        Fermeture propre.
+        1. Backup final avant quitter
+        2. WAL checkpoint
+        3. Destroy la fenetre
+        """
+        _LOG.info("Fermeture demandee — backup final en cours...")
+        self._set_status("Sauvegarde finale en cours...")
+        self.update()
+
+        ok, res = backup_db("fermeture")
+        if ok:
+            _LOG.info("Backup fermeture OK : %s", res)
+        else:
+            _LOG.error("Backup fermeture ECHOUE : %s", res)
+
+        # Checkpoint WAL final
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+            _LOG.info("WAL checkpoint final OK")
+        except Exception as exc:
+            _LOG.warning("WAL checkpoint final echoue : %s", exc)
+
+        _LOG.info("Application fermee proprement.")
+        self.destroy()
+
     def _refresh_all(self) -> None:
         self._refresh_dashboard()
         self._refresh_alloc_tab()
@@ -2645,9 +2925,38 @@ class PPEVaultApp(tk.Tk):
 # =============================================================================
 
 def main() -> None:
-    initialize_database()
+    _LOG.info("=" * 60)
+    _LOG.info("EPI Manager v3.0 — ISOFU — Demarrage")
+    _LOG.info("DB : %s", DB_PATH)
+    _LOG.info("Python %s  |  Platform : %s", sys.version.split()[0], sys.platform)
+    _LOG.info("=" * 60)
+
+    try:
+        initialize_database()
+    except RuntimeError as exc:
+        # Base corrompue — dialog avant GUI
+        try:
+            import tkinter as _tk
+            from tkinter import messagebox as _mb
+            _r = _tk.Tk()
+            _r.withdraw()
+            _mb.showerror(
+                "Base de Donnees Corrompue",
+                str(exc),
+                parent=_r,
+            )
+            _r.destroy()
+        except Exception:
+            print(f"FATAL : {exc}", file=sys.stderr)
+        _LOG.critical("Arret sur corruption DB : %s", exc)
+        sys.exit(1)
+    except Exception as exc:
+        _LOG.critical("Erreur initialisation DB : %s", exc, exc_info=True)
+        sys.exit(1)
+
     app = PPEVaultApp()
     app.mainloop()
+    _LOG.info("EPI Manager — Session terminee.")
 
 
 if __name__ == "__main__":
